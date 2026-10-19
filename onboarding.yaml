@@ -1,0 +1,379 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Onward Logistics - secure engineer onboarding. Role groups grant day-to-day
+  access with AWS managed policies; per-role permissions boundaries cap the most
+  any engineer can ever do; Secrets Manager generates first-login passwords;
+  CloudTrail records every access change. No inline policies.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label: { default: Naming }
+        Parameters: [ProjectPrefix]
+      - Label: { default: Audit }
+        Parameters: [CreateAuditTrail]
+
+Parameters:
+  ProjectPrefix:
+    Type: String
+    Default: onward
+    AllowedPattern: "^[a-z][a-z0-9-]{1,20}$"
+    Description: >-
+      Lower-case prefix used for IAM paths, secret names and audit resources.
+      Must match the prefix used by pipeline-roles.yaml.
+  CreateAuditTrail:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: >-
+      Create a multi-region CloudTrail trail and log bucket. Set to false only
+      if the account already has a multi-region trail with global service events.
+
+Conditions:
+  CreateTrail: !Equals [!Ref CreateAuditTrail, "true"]
+
+Resources:
+  # ---------------------------------------------------------------------------
+  # Permissions boundaries: the ceiling for each role. A boundary is a customer
+  # managed policy that only limits; it grants nothing on its own. Effective
+  # access = (group/user policies) AND (boundary), so attaching more policies
+  # to a group or user later can never exceed it.
+  # ---------------------------------------------------------------------------
+  StorageEngineerBoundary:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub ${ProjectPrefix}-boundary-storage-engineer
+      Path: !Sub /${ProjectPrefix}/boundaries/
+      Description: Maximum permissions for storage engineers (S3 only).
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowS3
+            Effect: Allow
+            Action:
+              - s3:*
+              - s3-object-lambda:*
+            Resource: "*"
+          - Sid: AllowSelfServicePassword
+            Effect: Allow
+            Action:
+              - iam:ChangePassword
+              - iam:GetUser
+            Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:user/${ProjectPrefix}/${!aws:username}
+          - Sid: AllowReadPasswordPolicy
+            Effect: Allow
+            Action: iam:GetAccountPasswordPolicy
+            Resource: "*"
+          - Sid: DenyAccountWidePublicAccessChanges
+            Effect: Deny
+            Action:
+              - s3:PutAccountPublicAccessBlock
+            Resource: "*"
+
+  ComputeEngineerBoundary:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub ${ProjectPrefix}-boundary-compute-engineer
+      Path: !Sub /${ProjectPrefix}/boundaries/
+      Description: Maximum permissions for compute engineers (EC2 and its supporting services).
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCompute
+            Effect: Allow
+            Action:
+              - ec2:*
+              - elasticloadbalancing:*
+              - autoscaling:*
+              - cloudwatch:*
+            Resource: "*"
+          - Sid: AllowComputeServiceLinkedRoles
+            Effect: Allow
+            Action: iam:CreateServiceLinkedRole
+            Resource: "*"
+            Condition:
+              StringEquals:
+                iam:AWSServiceName:
+                  - autoscaling.amazonaws.com
+                  - ec2scheduled.amazonaws.com
+                  - elasticloadbalancing.amazonaws.com
+                  - spot.amazonaws.com
+                  - spotfleet.amazonaws.com
+                  - transitgateway.amazonaws.com
+          - Sid: AllowSelfServicePassword
+            Effect: Allow
+            Action:
+              - iam:ChangePassword
+              - iam:GetUser
+            Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:user/${ProjectPrefix}/${!aws:username}
+          - Sid: AllowReadPasswordPolicy
+            Effect: Allow
+            Action: iam:GetAccountPasswordPolicy
+            Resource: "*"
+          # iam:PassRole is deliberately absent: a compute engineer cannot hand an
+          # instance a role with more power than they have themselves.
+
+  OnCallObserverBoundary:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub ${ProjectPrefix}-boundary-oncall-observer
+      Path: !Sub /${ProjectPrefix}/boundaries/
+      Description: >-
+        Maximum permissions for on-call engineers: observe compute only. Creating,
+        starting, stopping or terminating compute is impossible whatever else is attached.
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowObserveCompute
+            Effect: Allow
+            Action:
+              - ec2:Describe*
+              - elasticloadbalancing:Describe*
+              - autoscaling:Describe*
+              - cloudwatch:Describe*
+              - cloudwatch:Get*
+              - cloudwatch:List*
+            Resource: "*"
+          - Sid: AllowSelfServicePassword
+            Effect: Allow
+            Action:
+              - iam:ChangePassword
+              - iam:GetUser
+            Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:user/${ProjectPrefix}/${!aws:username}
+          - Sid: AllowReadPasswordPolicy
+            Effect: Allow
+            Action: iam:GetAccountPasswordPolicy
+            Resource: "*"
+          # The allow-list above already excludes these. The explicit deny states
+          # the guarantee outright: an explicit deny wins over any allow in any policy.
+          - Sid: DenyComputeLifecycle
+            Effect: Deny
+            Action:
+              - ec2:RunInstances
+              - ec2:StartInstances
+              - ec2:StopInstances
+              - ec2:RebootInstances
+              - ec2:TerminateInstances
+              - ec2:CreateFleet
+              - ec2:RequestSpotFleet
+              - ec2:RequestSpotInstances
+              - ec2:RunScheduledInstances
+              - autoscaling:CreateAutoScalingGroup
+              - autoscaling:UpdateAutoScalingGroup
+              - autoscaling:SetDesiredCapacity
+              - autoscaling:DeleteAutoScalingGroup
+              - autoscaling:TerminateInstanceInAutoScalingGroup
+            Resource: "*"
+
+  # ---------------------------------------------------------------------------
+  # Role groups: day-to-day permissions from AWS managed policies only.
+  # IAMUserChangePassword lets each engineer complete the forced reset.
+  # ---------------------------------------------------------------------------
+  StorageEngineersGroup:
+    Type: AWS::IAM::Group
+    Properties:
+      GroupName: !Sub ${ProjectPrefix}-storage-engineers
+      Path: !Sub /${ProjectPrefix}/
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonS3FullAccess
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/IAMUserChangePassword
+
+  ComputeEngineersGroup:
+    Type: AWS::IAM::Group
+    Properties:
+      GroupName: !Sub ${ProjectPrefix}-compute-engineers
+      Path: !Sub /${ProjectPrefix}/
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonEC2FullAccess
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/IAMUserChangePassword
+
+  OnCallObserversGroup:
+    Type: AWS::IAM::Group
+    Properties:
+      GroupName: !Sub ${ProjectPrefix}-oncall-observers
+      Path: !Sub /${ProjectPrefix}/
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonEC2ReadOnlyAccess
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/IAMUserChangePassword
+
+  # ---------------------------------------------------------------------------
+  # Engineers. To onboard a new hire, copy the secret + user pair for their
+  # role, change the name, and open a pull request.
+  # ---------------------------------------------------------------------------
+  S3UserInitialPassword:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${ProjectPrefix}/onboarding/s3-user/initial-password
+      Description: Generated first-login password for s3-user. Rotated by the user at first sign-in.
+      GenerateSecretString:
+        SecretStringTemplate: '{"username": "s3-user"}'
+        GenerateStringKey: password
+        PasswordLength: 24
+        ExcludeCharacters: "\"'@/\\`"
+        RequireEachIncludedType: true
+      Tags:
+        - { Key: Engineer, Value: s3-user }
+
+  S3User:
+    Type: AWS::IAM::User
+    Properties:
+      UserName: s3-user
+      Path: !Sub /${ProjectPrefix}/
+      Groups: [!Ref StorageEngineersGroup]
+      PermissionsBoundary: !Ref StorageEngineerBoundary
+      LoginProfile:
+        Password: !Sub "{{resolve:secretsmanager:${S3UserInitialPassword}:SecretString:password}}"
+        PasswordResetRequired: true
+      Tags:
+        - { Key: Role, Value: storage-engineer }
+
+  Ec2User1InitialPassword:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${ProjectPrefix}/onboarding/ec2-user-1/initial-password
+      Description: Generated first-login password for ec2-user-1. Rotated by the user at first sign-in.
+      GenerateSecretString:
+        SecretStringTemplate: '{"username": "ec2-user-1"}'
+        GenerateStringKey: password
+        PasswordLength: 24
+        ExcludeCharacters: "\"'@/\\`"
+        RequireEachIncludedType: true
+      Tags:
+        - { Key: Engineer, Value: ec2-user-1 }
+
+  Ec2User1:
+    Type: AWS::IAM::User
+    Properties:
+      UserName: ec2-user-1
+      Path: !Sub /${ProjectPrefix}/
+      Groups: [!Ref ComputeEngineersGroup]
+      PermissionsBoundary: !Ref ComputeEngineerBoundary
+      LoginProfile:
+        Password: !Sub "{{resolve:secretsmanager:${Ec2User1InitialPassword}:SecretString:password}}"
+        PasswordResetRequired: true
+      Tags:
+        - { Key: Role, Value: compute-engineer }
+
+  Ec2User2InitialPassword:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${ProjectPrefix}/onboarding/ec2-user-2/initial-password
+      Description: Generated first-login password for ec2-user-2. Rotated by the user at first sign-in.
+      GenerateSecretString:
+        SecretStringTemplate: '{"username": "ec2-user-2"}'
+        GenerateStringKey: password
+        PasswordLength: 24
+        ExcludeCharacters: "\"'@/\\`"
+        RequireEachIncludedType: true
+      Tags:
+        - { Key: Engineer, Value: ec2-user-2 }
+
+  Ec2User2:
+    Type: AWS::IAM::User
+    Properties:
+      UserName: ec2-user-2
+      Path: !Sub /${ProjectPrefix}/
+      Groups: [!Ref OnCallObserversGroup]
+      PermissionsBoundary: !Ref OnCallObserverBoundary
+      LoginProfile:
+        Password: !Sub "{{resolve:secretsmanager:${Ec2User2InitialPassword}:SecretString:password}}"
+        PasswordResetRequired: true
+      Tags:
+        - { Key: Role, Value: oncall-engineer }
+
+  # ---------------------------------------------------------------------------
+  # Audit trail: who changed what, and when. Logs are retained even if the
+  # stack is deleted.
+  # ---------------------------------------------------------------------------
+  AuditLogBucket:
+    Type: AWS::S3::Bucket
+    Condition: CreateTrail
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub ${ProjectPrefix}-audit-${AWS::AccountId}-${AWS::Region}
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+
+  # A bucket policy is a resource policy on the bucket, not an IAM inline policy.
+  # CloudTrail requires it to deliver logs.
+  AuditLogBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Condition: CreateTrail
+    Properties:
+      Bucket: !Ref AuditLogBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AWSCloudTrailAclCheck
+            Effect: Allow
+            Principal: { Service: cloudtrail.amazonaws.com }
+            Action: s3:GetBucketAcl
+            Resource: !GetAtt AuditLogBucket.Arn
+            Condition:
+              StringEquals:
+                aws:SourceArn: !Sub arn:${AWS::Partition}:cloudtrail:${AWS::Region}:${AWS::AccountId}:trail/${ProjectPrefix}-audit-trail
+          - Sid: AWSCloudTrailWrite
+            Effect: Allow
+            Principal: { Service: cloudtrail.amazonaws.com }
+            Action: s3:PutObject
+            Resource: !Sub ${AuditLogBucket.Arn}/AWSLogs/${AWS::AccountId}/*
+            Condition:
+              StringEquals:
+                s3:x-amz-acl: bucket-owner-full-control
+                aws:SourceArn: !Sub arn:${AWS::Partition}:cloudtrail:${AWS::Region}:${AWS::AccountId}:trail/${ProjectPrefix}-audit-trail
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: s3:*
+            Resource:
+              - !GetAtt AuditLogBucket.Arn
+              - !Sub ${AuditLogBucket.Arn}/*
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+
+  AuditTrail:
+    Type: AWS::CloudTrail::Trail
+    Condition: CreateTrail
+    DependsOn: AuditLogBucketPolicy
+    Properties:
+      TrailName: !Sub ${ProjectPrefix}-audit-trail
+      S3BucketName: !Ref AuditLogBucket
+      IsLogging: true
+      IsMultiRegionTrail: true
+      IncludeGlobalServiceEvents: true
+      EnableLogFileValidation: true
+
+Outputs:
+  ConsoleSignInUrl:
+    Description: Where engineers sign in for the first time.
+    Value: !Sub https://${AWS::AccountId}.signin.aws.amazon.com/console
+  S3UserArn:
+    Value: !GetAtt S3User.Arn
+  Ec2User1Arn:
+    Value: !GetAtt Ec2User1.Arn
+  Ec2User2Arn:
+    Value: !GetAtt Ec2User2.Arn
+  OnCallBoundaryArn:
+    Value: !Ref OnCallObserverBoundary
+  InitialPasswordSecrets:
+    Description: Secrets an onboarding admin reads to hand over each first-login password.
+    Value: !Join
+      - ", "
+      - [!Ref S3UserInitialPassword, !Ref Ec2User1InitialPassword, !Ref Ec2User2InitialPassword]
+  AuditTrailName:
+    Condition: CreateTrail
+    Value: !Ref AuditTrail

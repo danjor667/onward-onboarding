@@ -1,0 +1,11 @@
+# Git sync stack deployment file. Committing a change here (or to the template)
+# updates the stack automatically once the pull request is merged.
+template-file-path: onboarding.yaml
+
+parameters:
+  ProjectPrefix: onward
+  CreateAuditTrail: "true"
+
+tags:
+  Project: onward-onboarding
+  ManagedBy: cloudformation-gitsync

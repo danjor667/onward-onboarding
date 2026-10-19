@@ -1,0 +1,6 @@
+# Every change to access needs approval from security before it can merge.
+# Replace with a security team once Onward has one on GitHub.
+*                       @danjor667
+/onboarding.yaml        @danjor667
+/stack-config.yaml      @danjor667
+/pipeline-roles.yaml    @danjor667
