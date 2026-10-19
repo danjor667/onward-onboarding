@@ -13,7 +13,6 @@ compute, even if someone later attaches more permissions.
 
 Every group also has `IAMUserChangePassword` so engineers can complete the forced reset.
 Diagrams: [docs/architecture.md](docs/architecture.md).
-Discovery report: [docs/discovery-report.pdf](docs/discovery-report.pdf).
 
 ## Repository layout
 

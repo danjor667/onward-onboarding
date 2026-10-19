@@ -75,7 +75,7 @@ day_one_matrix() {
 oncall_matrix() {
   expect ec2-user-2 ec2:DescribeInstances allowed
   expect ec2-user-2 ec2:DescribeInstanceStatus allowed
-  expect ec2-user-2 cloudwatch:GetMetricData allowed
+  expect ec2-user-2 cloudwatch:GetMetricStatistics allowed
   expect ec2-user-2 ec2:RunInstances denied
   expect ec2-user-2 ec2:TerminateInstances denied
   expect ec2-user-2 ec2:StopInstances denied
