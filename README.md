@@ -52,7 +52,9 @@ scripts/check_policy_rules.py    CI rule: no inline policies, boundary + secret 
 
 ## Deploy
 
-Region: **us-east-1** (IAM is a global service and its CloudTrail events are recorded there).
+Region: **eu-central-1 (Frankfurt)**. Create the connection and both stacks there, and select
+Frankfurt in the console before step 4. IAM users, groups and boundaries are global; the secrets,
+stacks, trail and log bucket live in Frankfurt.
 
 1. **Create the GitHub repository** `onward-onboarding` and push this folder to `master`. Turn on branch
    protection for `master`: require a pull request, one approval, CODEOWNERS review and the
@@ -60,17 +62,17 @@ Region: **us-east-1** (IAM is a global service and its CloudTrail events are rec
 2. **Connect GitHub to AWS.** Create a CodeConnections connection to GitHub. Approving the GitHub
    app is an OAuth handshake, so it has to happen in a browser:
    ```bash
-   aws codeconnections create-connection --provider-type GitHub --connection-name onward-github
+   aws codeconnections create-connection --region eu-central-1 --provider-type GitHub --connection-name onward-github
    # then open Developer Tools > Settings > Connections in the console and choose "Update pending connection"
    ```
 3. **Bootstrap the roles** (once):
    ```bash
-   aws cloudformation deploy --region us-east-1 \
+   aws cloudformation deploy --region eu-central-1 \
      --stack-name onward-gitsync-bootstrap \
      --template-file pipeline-roles.yaml \
      --capabilities CAPABILITY_NAMED_IAM \
      --parameter-overrides ConnectionArn=<connection-arn>
-   aws cloudformation describe-stacks --stack-name onward-gitsync-bootstrap --query 'Stacks[0].Outputs'
+   aws cloudformation describe-stacks --region eu-central-1 --stack-name onward-gitsync-bootstrap --query 'Stacks[0].Outputs'
    ```
 4. **Create the Git sync stack.** In CloudFormation, choose **Create stack**, then **Sync from Git**, and set:
    - Stack name `onward-onboarding`, with your repository and branch `master`.

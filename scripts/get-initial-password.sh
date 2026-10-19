@@ -8,6 +8,7 @@ set -euo pipefail
 
 USER_NAME="${1:?usage: $0 USERNAME}"
 PREFIX="${PROJECT_PREFIX:-onward}"
+export AWS_REGION="${AWS_REGION:-eu-central-1}" # where the stack and secrets live
 
 aws secretsmanager get-secret-value \
   --secret-id "${PREFIX}/onboarding/${USER_NAME}/initial-password" \

@@ -8,6 +8,7 @@
 set -euo pipefail
 
 DAYS="${1:-7}"
+export AWS_REGION="${AWS_REGION:-eu-central-1}" # where the stack and secrets live
 mkdir -p evidence
 OUT="evidence/audit-$(date -u +%Y%m%dT%H%M%SZ).txt"
 exec > >(tee "$OUT") 2>&1
@@ -29,7 +30,8 @@ aws cloudformation describe-stack-events --stack-name "${STACK_NAME:-onward-onbo
 
 echo
 echo "== CloudTrail: IAM changes since ${START} =="
-# IAM is a global service; its events are recorded in us-east-1.
+# IAM is a global service: CloudTrail event history records its events in
+ whichever region the trail and stack are in.
 aws cloudtrail lookup-events --region us-east-1 \
   --lookup-attributes AttributeKey=EventSource,AttributeValue=iam.amazonaws.com \
   --start-time "$START" \
