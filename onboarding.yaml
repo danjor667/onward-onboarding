@@ -281,6 +281,20 @@ Resources:
       Tags:
         - { Key: Role, Value: oncall-engineer }
 
+  Ec2User3InitialPassword:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${ProjectPrefix}/onboarding/ec2-user-3/initial-password
+      Description: Generated first-login password for ec2-user-3. Rotated by the user at first sign-in.
+      GenerateSecretString:
+        SecretStringTemplate: '{"username": "ec2-user-3"}'
+        GenerateStringKey: password
+        PasswordLength: 24
+        ExcludeCharacters: "\"'@/\\`"
+        RequireEachIncludedType: true
+      Tags:
+        - { Key: Engineer, Value: ec2-user-3 }
+
   Ec2User3:
     Type: AWS::IAM::User
     Properties:
@@ -289,7 +303,7 @@ Resources:
       Groups: [ !Ref OnCallObserversGroup ]
       PermissionsBoundary: !Ref OnCallObserverBoundary
       LoginProfile:
-        Password: !Sub "{{resolve:secretsmanager:${Ec2User2InitialPassword}:SecretString:password}}"
+        Password: !Sub "{{resolve:secretsmanager:${Ec2User3InitialPassword}:SecretString:password}}"
         PasswordResetRequired: true
       Tags:
         - { Key: Role, Value: oncall-engineer }
