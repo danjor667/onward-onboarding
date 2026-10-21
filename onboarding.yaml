@@ -300,7 +300,7 @@ Resources:
     Properties:
       UserName: ec2-user-3
       Path: !Sub /${ProjectPrefix}/
-      Groups: [ !Ref OnCallObserversGroup ]
+      Groups: [!Ref OnCallObserversGroup]
       PermissionsBoundary: !Ref OnCallObserverBoundary
       LoginProfile:
         Password: !Sub "{{resolve:secretsmanager:${Ec2User3InitialPassword}:SecretString:password}}"
@@ -383,8 +383,6 @@ Resources:
       IsMultiRegionTrail: true
       IncludeGlobalServiceEvents: true
       EnableLogFileValidation: true
-
-
 
 Outputs:
   ConsoleSignInUrl:
