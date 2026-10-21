@@ -69,21 +69,25 @@ day_one_matrix() {
   expect ec2-user-1 iam:ChangePassword allowed
 
   echo "== ec2-user-2 (on-call observer) =="
-  oncall_matrix
+  oncall_matrix ec2-user-2
+
+  echo "== ec2-user-3 (on-call observer) =="
+  oncall_matrix ec2-user-3
 }
 
 oncall_matrix() {
-  expect ec2-user-2 ec2:DescribeInstances allowed
-  expect ec2-user-2 ec2:DescribeInstanceStatus allowed
-  expect ec2-user-2 cloudwatch:GetMetricStatistics allowed
-  expect ec2-user-2 ec2:RunInstances denied
-  expect ec2-user-2 ec2:TerminateInstances denied
-  expect ec2-user-2 ec2:StopInstances denied
-  expect ec2-user-2 ec2:CreateFleet denied
-  expect ec2-user-2 autoscaling:SetDesiredCapacity denied
-  expect ec2-user-2 s3:ListAllMyBuckets denied
-  expect ec2-user-2 iam:DeleteUserPermissionsBoundary denied
-  expect ec2-user-2 iam:ChangePassword allowed
+  local user="$1"
+  expect "$user" ec2:DescribeInstances allowed
+  expect "$user" ec2:DescribeInstanceStatus allowed
+  expect "$user" cloudwatch:GetMetricStatistics allowed
+  expect "$user" ec2:RunInstances denied
+  expect "$user" ec2:TerminateInstances denied
+  expect "$user" ec2:StopInstances denied
+  expect "$user" ec2:CreateFleet denied
+  expect "$user" autoscaling:SetDesiredCapacity denied
+  expect "$user" s3:ListAllMyBuckets denied
+  expect "$user" iam:DeleteUserPermissionsBoundary denied
+  expect "$user" iam:ChangePassword allowed
 }
 
 cleanup_stress() {
@@ -111,7 +115,10 @@ if $STRESS; then
   echo "Attached policies on user:  $(aws iam list-attached-user-policies --user-name ec2-user-2 \
     --query 'AttachedPolicies[].PolicyName' --output text)"
   sleep 10 # let IAM propagate the attachment
-  oncall_matrix
+  oncall_matrix ec2-user-2
+
+  echo "== ec2-user-3 (on-call observer) =="
+  oncall_matrix ec2-user-3
   cleanup_stress
   trap - EXIT
 fi
