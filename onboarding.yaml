@@ -281,6 +281,19 @@ Resources:
       Tags:
         - { Key: Role, Value: oncall-engineer }
 
+  Ec2User3:
+    Type: AWS::IAM::User
+    Properties:
+      UserName: ec2-user-3
+      Path: !Sub /${ProjectPrefix}/
+      Groups: [ !Ref OnCallObserversGroup ]
+      PermissionsBoundary: !Ref OnCallObserverBoundary
+      LoginProfile:
+        Password: !Sub "{{resolve:secretsmanager:${Ec2User2InitialPassword}:SecretString:password}}"
+        PasswordResetRequired: true
+      Tags:
+        - { Key: Role, Value: oncall-engineer }
+
   # ---------------------------------------------------------------------------
   # Audit trail: who changed what, and when. Logs are retained even if the
   # stack is deleted.
@@ -356,6 +369,8 @@ Resources:
       IsMultiRegionTrail: true
       IncludeGlobalServiceEvents: true
       EnableLogFileValidation: true
+
+
 
 Outputs:
   ConsoleSignInUrl:
